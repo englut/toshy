@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-__version__ = '20260312'                        # CLI option "--version" will print this out.
+__version__ = '20260325'                        # CLI option "--version" will print this out.
 
 import os
 os.environ['PYTHONDONTWRITEBYTECODE'] = '1'     # prevent this script from creating cache files
@@ -2794,6 +2794,54 @@ def install_udev_rules():
     show_task_completed_msg()
 
 
+def install_libinput_dwt_quirk():
+    """
+    Install the libinput disable-while-typing (DWT) quirk for the xwaykeyz
+    virtual keyboard.
+
+    Marks the virtual keyboard as 'internal' so libinput can pair it with the
+    internal touchpad for disable-while-typing (palm rejection). Harmless on
+    desktops (no touchpad means DWT has nothing to pair with). Or if an external
+    physical keyboard is used at the same time as an internal touchpad, the
+    external physical keyboard will be treated like an internal keyboard as
+    its input gets sent through the virtual keyboard device. So, this is
+    potentially beneficial even for the edge case with an external keyboard.
+
+    Idempotent — the underlying script checks whether the quirk is already
+    installed and exits cleanly if so.
+    """
+    print(f'\n\n§  Installing libinput disable-while-typing quirk for virtual keyboard...\n'
+            f'{cnfg.separator}')
+
+    script_path = os.path.join(this_file_dir, 'scripts', 'bin', 'toshy-libinput.sh')
+
+    if not os.path.isfile(script_path):
+        error(f'Cannot find toshy-libinput.sh at: {script_path}')
+        print('Skipping DWT quirk installation.')
+        return
+
+    # Check if already installed (no elevation needed, exit code 0 = installed)
+    cmd_lst     = ['bash', script_path, 'check-quirk']
+    result      = subprocess.run(cmd_lst, stdout=PIPE, stderr=PIPE, universal_newlines=True)
+
+    if result.returncode == 0:
+        print('DWT quirk is already installed. Nothing to do.')
+        show_task_completed_msg()
+        return
+
+    # Install the quirk (elevated so the script sees EUID 0 and runs directly)
+    cmd_lst     = [cnfg.priv_elev_cmd, 'bash', script_path, 'install-quirk']
+    result      = subprocess.run(cmd_lst, universal_newlines=True)
+
+    if result.returncode != 0:
+        error('Failed to install the libinput DWT quirk.')
+        print('You can install it manually later with: toshy-libinput install-quirk')
+        print('Continuing with setup...')
+        return
+
+    show_task_completed_msg()
+
+
 def group_exists_in_etc_group(group_name):
     """Utility function to check if the group exists in /etc/group file."""
     try:
@@ -4648,16 +4696,17 @@ def run_install_sequence(cnfg: InstallerSettings):
         install_distro_pkgs()
 
     if not cnfg.unprivileged_user:
-        # These things require 'sudo/doas/run0' (admin user)
+        # These things require 'sudo/sudo-rs/doas/run0' (admin user)
         # Allow them to be skipped to support non-admin users
         # (An admin user would need to first do the "prep-only" command to support this)
 
-        # load_uinput_module()
         setup_uinput_module()
+
+        install_libinput_dwt_quirk()
 
         install_udev_rules()
         if not cnfg.prep_only:
-            # We don't need to check the user group for admin doing prep-only command
+            # We don't need to check the user group for admin doing prep-only command.
             verify_user_groups()
 
     if cnfg.prep_only:
